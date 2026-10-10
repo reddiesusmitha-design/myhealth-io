@@ -8,19 +8,24 @@ const supabaseKey = (
   ''
 ).trim();
 
-export const isSupabaseConfigured = Boolean(
+export const isSupabaseConfigured: boolean = Boolean(
   supabaseUrl &&
-    supabaseKey &&
-    !supabaseUrl.includes('placeholder') &&
-    !supabaseKey.includes('placeholder')
+  supabaseKey &&
+  !supabaseUrl.includes('placeholder') &&
+  !supabaseKey.includes('placeholder')
 );
 
 export const supabase: SupabaseClient | null = isSupabaseConfigured
-  ? createClient(supabaseUrl, supabaseKey)
+  ? createClient(supabaseUrl, supabaseKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    })
   : null;
 
 if (isSupabaseConfigured) {
-  logger.info('[Supabase] Supabase client initialized successfully.');
+  logger.info('[Supabase] Client initialized successfully for backend.');
 } else {
-  logger.info('[Supabase] Notice: SUPABASE_URL / keys not configured. Ready for credentials.');
+  logger.info('[Supabase] Notice: SUPABASE_URL / keys not configured in backend/.env. Ready for credentials.');
 }

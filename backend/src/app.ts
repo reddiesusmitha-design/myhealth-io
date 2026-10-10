@@ -14,6 +14,7 @@ import firstaidRoutes from './routes/firstaid.routes';
 import { errorHandler } from './middleware/errorHandler';
 import { config } from './config';
 import { getDatabaseStatus, isDatabaseConnected, connectDatabase } from './config/database';
+import { isSupabaseConfigured } from './config/supabase';
 
 const app: Application = express();
 
@@ -68,6 +69,7 @@ app.get('/api/health', async (req: Request, res: Response) => {
     timestamp: new Date().toISOString(),
     aiProvider: config.aiProvider,
     database: getDatabaseStatus(),
+    supabase: { configured: isSupabaseConfigured },
   });
 });
 

@@ -1,5 +1,9 @@
-const rawUrl =
-  (import.meta as any).env?.VITE_API_URL || 'https://myhealthio-backend.onrender.com/api';
+const defaultUrl =
+  (import.meta as any).env?.DEV
+    ? 'http://localhost:5000/api'
+    : 'https://myhealthio-backend.onrender.com/api';
+
+const rawUrl = (import.meta as any).env?.VITE_API_URL || defaultUrl;
 export const API_BASE_URL = rawUrl.replace(/\/+$/, '');
 
 export function getAuthToken(): string | null {
