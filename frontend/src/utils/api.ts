@@ -1,5 +1,5 @@
 export const API_BASE_URL =
-  (import.meta as any).env?.VITE_API_URL || 'http://localhost:5000/api';
+  (import.meta as any).env?.VITE_API_URL || 'https://myhealthio-backend.onrender.com/api';
 
 export function getAuthToken(): string | null {
   return localStorage.getItem('myhealthio_token');
