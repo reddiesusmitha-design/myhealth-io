@@ -3,7 +3,7 @@ dotenv.config();
 
 
 const cleanEnv = (val?: string): string =>
-  val ? val.replace(/[\r\n\t"]/g, '').trim() : '';
+  val ? val.replace(/^['"]+|['"]+$/g, '').replace(/[\r\n\t]/g, '').trim() : '';
 
 export const config = {
   port: parseInt(cleanEnv(process.env.PORT) || '5000', 10),
