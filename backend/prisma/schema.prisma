@@ -1,0 +1,170 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String          @id @default(uuid())
+  email        String          @unique
+  passwordHash String
+  fullName     String
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  profile      PatientProfile?
+  documents    MedicalDocument[]
+  labs         LabObservation[]
+  medications  MedicationRecord[]
+  timeline     TimelineEvent[]
+  auditEvents  AuditEvent[]
+
+  @@map("users")
+}
+
+model PatientProfile {
+  id                String   @id @default(uuid())
+  userId            String   @unique
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mockAbhaId        String   @unique
+  dateOfBirth       DateTime?
+  gender            String?
+  bloodGroup        String?
+  emergencyContact  String?
+  preferredLanguage String   @default("en")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@map("patient_profiles")
+}
+
+model MedicalDocument {
+  id               String          @id @default(uuid())
+  userId           String
+  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  originalFilename String
+  filePath         String
+  mimeType         String
+  fileSizeBytes    BigInt
+  documentType     String          @default("LAB_REPORT")
+  documentDate     DateTime?
+  extractedRawText String?         @db.Text
+  processingStatus String          @default("PENDING")
+  ocrConfidence    Float?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  extractedFields  ExtractedField[]
+  labs             LabObservation[]
+  medications      MedicationRecord[]
+  summary          HealthSummary?
+  timelineEvents   TimelineEvent[]
+
+  @@index([userId])
+  @@map("medical_documents")
+}
+
+model ExtractedField {
+  id                 String          @id @default(uuid())
+  documentId         String
+  document           MedicalDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  fieldCategory      String
+  fieldKey           String
+  fieldValue         String
+  confidenceScore    Float
+  isUncertain        Boolean         @default(false)
+  uncertaintyReason  String?
+  sourceSnippet      String          @db.Text
+  isUserReviewed     Boolean         @default(false)
+  userOverrideValue  String?
+  createdAt          DateTime        @default(now())
+
+  @@index([documentId])
+  @@map("extracted_fields")
+}
+
+model LabObservation {
+  id              String          @id @default(uuid())
+  documentId      String
+  document        MedicalDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  userId          String
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  testName        String
+  valueNumeric    Float?
+  valueString     String?
+  unit            String?
+  referenceLow    Float?
+  referenceHigh   Float?
+  referenceText   String?
+  interpretation  String?
+  observationDate DateTime?
+  sourceSnippet   String?         @db.Text
+  createdAt       DateTime        @default(now())
+
+  @@index([userId])
+  @@map("lab_observations")
+}
+
+model MedicationRecord {
+  id             String          @id @default(uuid())
+  documentId     String
+  document       MedicalDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  medicationName String
+  dosage         String?
+  frequency      String?
+  duration       String?
+  route          String?
+  instructions   String?         @db.Text
+  sourceSnippet  String?         @db.Text
+  createdAt      DateTime        @default(now())
+
+  @@index([userId])
+  @@map("medication_records")
+}
+
+model HealthSummary {
+  id             String          @id @default(uuid())
+  documentId     String          @unique
+  document       MedicalDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  summaryEn      String          @db.Text
+  summaryTe      String?         @db.Text
+  keyFindings    Json            @default("[]")
+  aiProvider     String
+  disclaimerText String          @db.Text
+  createdAt      DateTime        @default(now())
+
+  @@map("health_summaries")
+}
+
+model TimelineEvent {
+  id             String           @id @default(uuid())
+  userId         String
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documentId     String?
+  document       MedicalDocument? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  eventDate      DateTime
+  eventType      String
+  title          String
+  summaryPreview String?          @db.Text
+  severityLevel  String           @default("INFO")
+  createdAt      DateTime         @default(now())
+
+  @@index([userId, eventDate])
+  @@map("timeline_events")
+}
+
+model AuditEvent {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action       String
+  resourceType String?
+  resourceId   String?
+  ipAddress    String?
+  createdAt    DateTime @default(now())
+
+  @@map("audit_events")
+}
