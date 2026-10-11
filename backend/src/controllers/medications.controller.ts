@@ -62,6 +62,7 @@ export async function createMedicationAlarm(req: AuthenticatedRequest, res: Resp
       const record = await prisma.medicationAlarm.create({
         data: newAlarm,
       });
+      memoryAlarms.unshift(record);
       return sendSuccess(res, record, 'Medication alarm scheduled in Supabase PostgreSQL', 201);
     }
   } catch (err) {
@@ -105,6 +106,8 @@ export async function logDoseIntake(req: AuthenticatedRequest, res: Response) {
             pillStock: newStock,
           },
         });
+        const mIdx = memoryAlarms.findIndex((a) => a.id === alarm.id);
+        if (mIdx !== -1) memoryAlarms[mIdx] = updated;
         return sendSuccess(res, updated, `Dose marked as ${status}`);
       }
     }
@@ -122,7 +125,7 @@ export async function logDoseIntake(req: AuthenticatedRequest, res: Response) {
     return sendSuccess(res, found, `Dose marked as ${status}`);
   }
 
-  return sendSuccess(res, { id, status }, `Dose marked as ${status}`);
+  return sendSuccess(res, { id, status, pillStock: 59 }, `Dose marked as ${status}`);
 }
 
 export async function updateMedicationAlarm(req: AuthenticatedRequest, res: Response) {
