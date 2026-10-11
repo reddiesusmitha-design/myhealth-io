@@ -1,19 +1,27 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { sendSuccess, sendError } from '../utils/response';
-import { ReportModel } from '../models/Report';
-import { TimelineModel } from '../models/Timeline';
-import { NotificationModel } from '../models/Notification';
-import { isDatabaseConnected } from '../config/database';
+import { prisma, isPrismaConnected } from '../config/prisma';
+
+function serializeReport(r: any) {
+  if (!r) return r;
+  return {
+    ...r,
+    fileSizeBytes: r.fileSizeBytes !== undefined ? Number(r.fileSizeBytes) : 0,
+  };
+}
 
 export async function listReports(req: AuthenticatedRequest, res: Response) {
   const userId = req.user?.id;
   if (!userId) return sendError(res, 'Unauthorized', 401);
 
   try {
-    if (isDatabaseConnected()) {
-      const reports = await ReportModel.find({ userId }).sort({ createdAt: -1 });
-      return sendSuccess(res, reports, 'Reports retrieved from MongoDB Atlas');
+    if (isPrismaConnected()) {
+      const reports = await prisma.medicalReport.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+      });
+      return sendSuccess(res, reports.map(serializeReport), 'Reports retrieved from Supabase PostgreSQL');
     }
   } catch (err: any) {
     return sendError(res, `Failed to load reports: ${err.message}`, 500);
@@ -29,12 +37,13 @@ export async function uploadReport(req: AuthenticatedRequest, res: Response) {
   const { originalFilename, documentType, facility, rawText } = req.body;
 
   try {
+    const filename = originalFilename || req.file?.originalname || 'Clinical_Lab_Report.pdf';
     const reportData = {
       userId,
-      originalFilename: originalFilename || req.file?.originalname || 'Clinical_Lab_Report.pdf',
+      originalFilename: filename,
       filePath: req.file?.path || '',
       mimeType: req.file?.mimetype || 'application/pdf',
-      fileSizeBytes: req.file?.size || 1024,
+      fileSizeBytes: BigInt(req.file?.size || 1024),
       documentType: documentType || 'LAB_REPORT',
       documentDate: new Date(),
       facility: facility || 'Clinical Diagnostic Center',
@@ -49,36 +58,48 @@ export async function uploadReport(req: AuthenticatedRequest, res: Response) {
       },
       labs: [],
       medications: [],
+      fields: [],
     };
 
-    if (isDatabaseConnected()) {
-      const savedReport = await ReportModel.create(reportData);
+    if (isPrismaConnected()) {
+      const savedReport = await prisma.medicalReport.create({
+        data: reportData,
+      });
 
-      // Create a timeline event in MongoDB
-      await TimelineModel.create({
-        userId,
-        reportId: savedReport._id.toString(),
-        eventDate: savedReport.documentDate,
-        eventType: savedReport.documentType,
-        title: savedReport.originalFilename,
-        summaryPreview: `Uploaded from ${savedReport.facility}`,
-        severityLevel: 'NORMAL',
+      // Create a timeline event linked to this report
+      await prisma.timelineEvent.create({
+        data: {
+          userId,
+          reportId: savedReport.id,
+          eventDate: savedReport.documentDate,
+          eventType: savedReport.documentType,
+          title: savedReport.originalFilename,
+          summaryPreview: `Uploaded from ${savedReport.facility}`,
+          severityLevel: 'NORMAL',
+        },
       });
 
       // Create a notification for the user
-      await NotificationModel.create({
-        userId,
-        title: 'New Health Record Uploaded',
-        message: `${savedReport.originalFilename} has been stored and processed in your health record.`,
-        type: 'LAB_RESULT',
-        priority: 'NORMAL',
-        actionUrl: `/reports/${savedReport._id}`,
+      await prisma.notification.create({
+        data: {
+          userId,
+          title: 'New Health Record Uploaded',
+          message: `${savedReport.originalFilename} has been stored and processed in your health record.`,
+          type: 'LAB_RESULT',
+          priority: 'NORMAL',
+          actionUrl: `/reports/${savedReport.id}`,
+        },
       });
 
-      return sendSuccess(res, savedReport, 'Report uploaded and saved in MongoDB Atlas', 201);
+      return sendSuccess(res, serializeReport(savedReport), 'Report uploaded and saved in Supabase PostgreSQL', 201);
     }
 
-    return sendSuccess(res, { id: `report-${Date.now()}`, ...reportData }, 'Report uploaded', 201);
+    return sendSuccess(
+      res,
+      serializeReport({ id: `report-${Date.now()}`, ...reportData }),
+      'Report uploaded',
+      201
+    );
   } catch (err: any) {
     return sendError(res, `Failed to upload report: ${err.message}`, 500);
   }
@@ -89,17 +110,23 @@ export async function getReportById(req: AuthenticatedRequest, res: Response) {
   const { id } = req.params;
 
   try {
-    if (isDatabaseConnected()) {
-      const report = await ReportModel.findOne({ _id: id, userId });
+    if (isPrismaConnected()) {
+      const report = await prisma.medicalReport.findFirst({
+        where: { id, userId },
+      });
       if (report) {
-        return sendSuccess(res, report, 'Report retrieved from MongoDB Atlas');
+        return sendSuccess(res, serializeReport(report), 'Report retrieved from Supabase PostgreSQL');
       }
     }
   } catch (err: any) {
     return sendError(res, `Failed to fetch report: ${err.message}`, 500);
   }
 
-  return sendSuccess(res, { id, userId, originalFilename: 'Medical Report', processingStatus: 'COMPLETED' }, 'Report details retrieved');
+  return sendSuccess(
+    res,
+    { id, userId, originalFilename: 'Medical Report', processingStatus: 'COMPLETED' },
+    'Report details retrieved'
+  );
 }
 
 export async function analyzeReport(req: AuthenticatedRequest, res: Response) {
@@ -115,10 +142,11 @@ export async function deleteReport(req: AuthenticatedRequest, res: Response) {
   const { id } = req.params;
 
   try {
-    if (isDatabaseConnected()) {
-      await ReportModel.deleteOne({ _id: id, userId });
-      await TimelineModel.deleteMany({ reportId: id, userId });
-      return sendSuccess(res, { id }, 'Report deleted from MongoDB Atlas');
+    if (isPrismaConnected()) {
+      await prisma.medicalReport.deleteMany({
+        where: { id, userId },
+      });
+      return sendSuccess(res, { id }, 'Report deleted from Supabase PostgreSQL');
     }
   } catch (err: any) {
     return sendError(res, `Failed to delete report: ${err.message}`, 500);

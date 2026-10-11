@@ -1,8 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { sendSuccess, sendError } from '../utils/response';
-import { AppointmentModel } from '../models/Appointment';
-import { isDatabaseConnected } from '../config/database';
+import { prisma, isPrismaConnected } from '../config/prisma';
 
 let memoryAppointments: any[] = [];
 
@@ -10,9 +9,12 @@ export async function listAppointments(req: AuthenticatedRequest, res: Response)
   const userId = req.user?.id || 'patient-user-001';
 
   try {
-    if (isDatabaseConnected()) {
-      const docs = await AppointmentModel.find({ userId }).sort({ date: 1 });
-      return sendSuccess(res, docs, 'Appointments retrieved');
+    if (isPrismaConnected()) {
+      const records = await prisma.appointment.findMany({
+        where: { userId },
+        orderBy: { date: 'asc' },
+      });
+      return sendSuccess(res, records, 'Appointments retrieved from Supabase PostgreSQL');
     }
   } catch (err) {
     // fallback
@@ -43,7 +45,6 @@ export async function createAppointment(req: AuthenticatedRequest, res: Response
   }
 
   const newAppt = {
-    id: `appt-${Date.now()}`,
     userId,
     doctorName,
     specialty: specialty || 'General Medicine',
@@ -58,20 +59,22 @@ export async function createAppointment(req: AuthenticatedRequest, res: Response
     reminderSet: true,
     location: location || 'Consultation Room',
     contactPhone: contactPhone || '+91 40 2345 6789',
-    createdAt: new Date(),
   };
 
   try {
-    if (isDatabaseConnected()) {
-      const doc = await AppointmentModel.create(newAppt);
-      return sendSuccess(res, doc, 'Appointment scheduled', 201);
+    if (isPrismaConnected()) {
+      const doc = await prisma.appointment.create({
+        data: newAppt,
+      });
+      return sendSuccess(res, doc, 'Appointment scheduled in Supabase PostgreSQL', 201);
     }
   } catch (err) {
     // fallback
   }
 
-  memoryAppointments.push(newAppt);
-  return sendSuccess(res, newAppt, 'Appointment scheduled', 201);
+  const memDoc = { id: `appt-${Date.now()}`, ...newAppt, createdAt: new Date() };
+  memoryAppointments.push(memDoc);
+  return sendSuccess(res, memDoc, 'Appointment scheduled', 201);
 }
 
 export async function updateAppointment(req: AuthenticatedRequest, res: Response) {
@@ -79,19 +82,21 @@ export async function updateAppointment(req: AuthenticatedRequest, res: Response
   const userId = req.user?.id || 'patient-user-001';
 
   try {
-    if (isDatabaseConnected()) {
-      const updated = await AppointmentModel.findOneAndUpdate(
-        { _id: id, userId },
-        { ...req.body },
-        { new: true }
-      );
-      if (updated) return sendSuccess(res, updated, 'Appointment updated');
+    if (isPrismaConnected()) {
+      const updated = await prisma.appointment.updateMany({
+        where: { id, userId },
+        data: req.body,
+      });
+      if (updated.count > 0) {
+        const record = await prisma.appointment.findUnique({ where: { id } });
+        return sendSuccess(res, record, 'Appointment updated in Supabase PostgreSQL');
+      }
     }
   } catch (err) {
     // fallback
   }
 
-  const idx = memoryAppointments.findIndex((a) => a.id === id || a._id === id);
+  const idx = memoryAppointments.findIndex((a) => a.id === id);
   if (idx !== -1) {
     memoryAppointments[idx] = { ...memoryAppointments[idx], ...req.body };
     return sendSuccess(res, memoryAppointments[idx], 'Appointment updated');
@@ -105,13 +110,16 @@ export async function deleteAppointment(req: AuthenticatedRequest, res: Response
   const userId = req.user?.id || 'patient-user-001';
 
   try {
-    if (isDatabaseConnected()) {
-      await AppointmentModel.deleteOne({ _id: id, userId });
+    if (isPrismaConnected()) {
+      await prisma.appointment.deleteMany({
+        where: { id, userId },
+      });
+      return sendSuccess(res, { id }, 'Appointment deleted from Supabase PostgreSQL');
     }
   } catch (err) {
     // fallback
   }
 
-  memoryAppointments = memoryAppointments.filter((a) => a.id !== id && a._id !== id);
-  return sendSuccess(res, { id }, 'Appointment removed');
+  memoryAppointments = memoryAppointments.filter((a) => a.id !== id);
+  return sendSuccess(res, { id }, 'Appointment deleted');
 }

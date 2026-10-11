@@ -1,19 +1,21 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { sendSuccess, sendError } from '../utils/response';
-import { NotificationModel } from '../models/Notification';
-import { isDatabaseConnected } from '../config/database';
+import { prisma, isPrismaConnected } from '../config/prisma';
 
-// In-memory fallback notifications
 let memoryNotifications: any[] = [];
 
 export async function listNotifications(req: AuthenticatedRequest, res: Response) {
   const userId = req.user?.id || 'patient-user-001';
 
   try {
-    if (isDatabaseConnected()) {
-      const docs = await NotificationModel.find({ userId }).sort({ createdAt: -1 }).limit(50);
-      return sendSuccess(res, docs, 'Notifications fetched successfully');
+    if (isPrismaConnected()) {
+      const docs = await prisma.notification.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      });
+      return sendSuccess(res, docs, 'Notifications fetched successfully from Supabase PostgreSQL');
     }
   } catch (err) {
     // fallback to memory
@@ -28,19 +30,21 @@ export async function markNotificationAsRead(req: AuthenticatedRequest, res: Res
   const userId = req.user?.id || 'patient-user-001';
 
   try {
-    if (isDatabaseConnected()) {
-      const updated = await NotificationModel.findOneAndUpdate(
-        { _id: id, userId },
-        { read: true },
-        { new: true }
-      );
-      if (updated) return sendSuccess(res, updated, 'Notification marked as read');
+    if (isPrismaConnected()) {
+      const updated = await prisma.notification.updateMany({
+        where: { id, userId },
+        data: { read: true },
+      });
+      if (updated.count > 0) {
+        const notif = await prisma.notification.findUnique({ where: { id } });
+        return sendSuccess(res, notif, 'Notification marked as read in Supabase PostgreSQL');
+      }
     }
   } catch (err) {
     // fallback
   }
 
-  const notif = memoryNotifications.find((n) => n.id === id || n._id === id);
+  const notif = memoryNotifications.find((n) => n.id === id);
   if (notif) {
     notif.read = true;
     return sendSuccess(res, notif, 'Notification marked as read');
@@ -53,8 +57,12 @@ export async function markAllNotificationsRead(req: AuthenticatedRequest, res: R
   const userId = req.user?.id || 'patient-user-001';
 
   try {
-    if (isDatabaseConnected()) {
-      await NotificationModel.updateMany({ userId }, { read: true });
+    if (isPrismaConnected()) {
+      await prisma.notification.updateMany({
+        where: { userId },
+        data: { read: true },
+      });
+      return sendSuccess(res, { success: true }, 'All notifications marked as read in Supabase PostgreSQL');
     }
   } catch (err) {
     // fallback
@@ -76,7 +84,6 @@ export async function createNotification(req: AuthenticatedRequest, res: Respons
   }
 
   const newNotif = {
-    id: `notif-${Date.now()}`,
     userId,
     title,
     message,
@@ -84,20 +91,22 @@ export async function createNotification(req: AuthenticatedRequest, res: Respons
     priority: priority || 'NORMAL',
     read: false,
     actionUrl: actionUrl || '',
-    createdAt: new Date(),
   };
 
   try {
-    if (isDatabaseConnected()) {
-      const doc = await NotificationModel.create(newNotif);
-      return sendSuccess(res, doc, 'Notification created', 201);
+    if (isPrismaConnected()) {
+      const doc = await prisma.notification.create({
+        data: newNotif,
+      });
+      return sendSuccess(res, doc, 'Notification created in Supabase PostgreSQL', 201);
     }
   } catch (err) {
     // fallback
   }
 
-  memoryNotifications.unshift(newNotif);
-  return sendSuccess(res, newNotif, 'Notification created', 201);
+  const memNotif = { id: `notif-${Date.now()}`, ...newNotif, createdAt: new Date() };
+  memoryNotifications.unshift(memNotif);
+  return sendSuccess(res, memNotif, 'Notification created', 201);
 }
 
 export async function deleteNotification(req: AuthenticatedRequest, res: Response) {
@@ -105,13 +114,16 @@ export async function deleteNotification(req: AuthenticatedRequest, res: Respons
   const userId = req.user?.id || 'patient-user-001';
 
   try {
-    if (isDatabaseConnected()) {
-      await NotificationModel.deleteOne({ _id: id, userId });
+    if (isPrismaConnected()) {
+      await prisma.notification.deleteMany({
+        where: { id, userId },
+      });
+      return sendSuccess(res, { id }, 'Notification deleted from Supabase PostgreSQL');
     }
   } catch (err) {
     // fallback
   }
 
-  memoryNotifications = memoryNotifications.filter((n) => n.id !== id && n._id !== id);
+  memoryNotifications = memoryNotifications.filter((n) => n.id !== id);
   return sendSuccess(res, { id }, 'Notification deleted');
 }

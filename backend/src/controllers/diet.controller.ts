@@ -1,8 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { sendSuccess, sendError } from '../utils/response';
-import { DietProfileModel } from '../models/DietMenu';
-import { isDatabaseConnected } from '../config/database';
+import { prisma, isPrismaConnected } from '../config/prisma';
 
 const DEFAULT_DIET_PLAN = {
   planName: 'Diabetic & Cardiac Balanced Wellness Plan',
@@ -204,15 +203,17 @@ export async function getDietMenu(req: AuthenticatedRequest, res: Response) {
   const userId = req.user?.id || 'patient-user-001';
 
   try {
-    if (isDatabaseConnected()) {
-      let doc = await DietProfileModel.findOne({ userId });
+    if (isPrismaConnected()) {
+      let doc = await prisma.dietProfile.findUnique({ where: { userId } });
       if (!doc) {
-        doc = await DietProfileModel.create({
-          userId,
-          ...DEFAULT_DIET_PLAN,
+        doc = await prisma.dietProfile.create({
+          data: {
+            userId,
+            ...DEFAULT_DIET_PLAN,
+          },
         });
       }
-      return sendSuccess(res, doc, 'Diet menu retrieved');
+      return sendSuccess(res, doc, 'Diet menu retrieved from Supabase PostgreSQL');
     }
   } catch (err) {
     // fallback
@@ -234,17 +235,29 @@ export async function logWaterIntake(req: AuthenticatedRequest, res: Response) {
   const { amountDelta, glasses } = req.body;
 
   try {
-    if (isDatabaseConnected()) {
-      const doc = await DietProfileModel.findOne({ userId });
-      if (doc) {
-        if (typeof glasses === 'number') {
-          doc.waterLoggedGlasses = Math.max(0, glasses);
-        } else if (typeof amountDelta === 'number') {
-          doc.waterLoggedGlasses = Math.max(0, doc.waterLoggedGlasses + amountDelta);
-        }
-        await doc.save();
-        return sendSuccess(res, doc, 'Water intake updated');
+    if (isPrismaConnected()) {
+      let doc = await prisma.dietProfile.findUnique({ where: { userId } });
+      if (!doc) {
+        doc = await prisma.dietProfile.create({
+          data: {
+            userId,
+            ...DEFAULT_DIET_PLAN,
+          },
+        });
       }
+
+      let newGlasses = doc.waterLoggedGlasses;
+      if (typeof glasses === 'number') {
+        newGlasses = Math.max(0, glasses);
+      } else if (typeof amountDelta === 'number') {
+        newGlasses = Math.max(0, newGlasses + amountDelta);
+      }
+
+      const updated = await prisma.dietProfile.update({
+        where: { userId },
+        data: { waterLoggedGlasses: newGlasses },
+      });
+      return sendSuccess(res, updated, 'Water intake updated in Supabase PostgreSQL');
     }
   } catch (err) {
     // fallback
@@ -271,13 +284,17 @@ export async function updateDietPlan(req: AuthenticatedRequest, res: Response) {
   const updateData = req.body;
 
   try {
-    if (isDatabaseConnected()) {
-      const updated = await DietProfileModel.findOneAndUpdate(
-        { userId },
-        { ...updateData },
-        { new: true, upsert: true }
-      );
-      return sendSuccess(res, updated, 'Diet plan updated');
+    if (isPrismaConnected()) {
+      const updated = await prisma.dietProfile.upsert({
+        where: { userId },
+        update: { ...updateData },
+        create: {
+          userId,
+          ...DEFAULT_DIET_PLAN,
+          ...updateData,
+        },
+      });
+      return sendSuccess(res, updated, 'Diet plan updated in Supabase PostgreSQL');
     }
   } catch (err) {
     // fallback

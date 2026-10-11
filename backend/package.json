@@ -7,9 +7,11 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "test": "vitest run",
+    "test": "node --import tsx --test tests/**/*.test.ts",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev"
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "migrate:mongo-to-postgres": "tsx src/scripts/migrateMongoToPostgres.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.14.0",

@@ -1,8 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { sendSuccess, sendError } from '../utils/response';
-import { MedicationAlarmModel } from '../models/MedicationAlarm';
-import { isDatabaseConnected } from '../config/database';
+import { prisma, isPrismaConnected } from '../config/prisma';
 
 let memoryAlarms: any[] = [];
 
@@ -10,9 +9,12 @@ export async function listMedicationAlarms(req: AuthenticatedRequest, res: Respo
   const userId = req.user?.id || 'patient-user-001';
 
   try {
-    if (isDatabaseConnected()) {
-      const docs = await MedicationAlarmModel.find({ userId }).sort({ createdAt: -1 });
-      return sendSuccess(res, docs, 'Medication alarms retrieved');
+    if (isPrismaConnected()) {
+      const records = await prisma.medicationAlarm.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+      });
+      return sendSuccess(res, records, 'Medication alarms retrieved from Supabase PostgreSQL');
     }
   } catch (err) {
     // fallback
@@ -41,7 +43,6 @@ export async function createMedicationAlarm(req: AuthenticatedRequest, res: Resp
   }
 
   const newAlarm = {
-    id: `alarm-${Date.now()}`,
     userId,
     medicineName,
     dosage: dosage || '1 Tablet',
@@ -54,20 +55,22 @@ export async function createMedicationAlarm(req: AuthenticatedRequest, res: Resp
     lowStockThreshold: Number(lowStockThreshold) || 5,
     active: true,
     intakeLogs: [],
-    createdAt: new Date(),
   };
 
   try {
-    if (isDatabaseConnected()) {
-      const doc = await MedicationAlarmModel.create(newAlarm);
-      return sendSuccess(res, doc, 'Medication alarm scheduled', 201);
+    if (isPrismaConnected()) {
+      const record = await prisma.medicationAlarm.create({
+        data: newAlarm,
+      });
+      return sendSuccess(res, record, 'Medication alarm scheduled in Supabase PostgreSQL', 201);
     }
   } catch (err) {
     // fallback
   }
 
-  memoryAlarms.unshift(newAlarm);
-  return sendSuccess(res, newAlarm, 'Medication alarm scheduled', 201);
+  const memRecord = { id: `alarm-${Date.now()}`, ...newAlarm, createdAt: new Date() };
+  memoryAlarms.unshift(memRecord);
+  return sendSuccess(res, memRecord, 'Medication alarm scheduled', 201);
 }
 
 export async function logDoseIntake(req: AuthenticatedRequest, res: Response) {
@@ -79,26 +82,37 @@ export async function logDoseIntake(req: AuthenticatedRequest, res: Response) {
     date: date || new Date().toISOString().split('T')[0],
     time: time || '08:00',
     status: status || 'TAKEN',
-    takenAt: new Date(),
+    takenAt: new Date().toISOString(),
   };
 
   try {
-    if (isDatabaseConnected()) {
-      const alarm = await MedicationAlarmModel.findOne({ _id: id, userId });
+    if (isPrismaConnected()) {
+      const alarm = await prisma.medicationAlarm.findFirst({
+        where: { id, userId },
+      });
       if (alarm) {
-        alarm.intakeLogs.push(logEntry);
-        if (status === 'TAKEN' && alarm.pillStock > 0) {
-          alarm.pillStock -= 1;
+        const existingLogs = Array.isArray(alarm.intakeLogs) ? (alarm.intakeLogs as any[]) : [];
+        const updatedLogs = [...existingLogs, logEntry];
+        let newStock = alarm.pillStock;
+        if (status === 'TAKEN' && newStock > 0) {
+          newStock -= 1;
         }
-        await alarm.save();
-        return sendSuccess(res, alarm, `Dose marked as ${status}`);
+
+        const updated = await prisma.medicationAlarm.update({
+          where: { id: alarm.id },
+          data: {
+            intakeLogs: updatedLogs,
+            pillStock: newStock,
+          },
+        });
+        return sendSuccess(res, updated, `Dose marked as ${status}`);
       }
     }
   } catch (err) {
     // fallback
   }
 
-  const found = memoryAlarms.find((a) => a.id === id || a._id === id);
+  const found = memoryAlarms.find((a) => a.id === id);
   if (found) {
     if (!found.intakeLogs) found.intakeLogs = [];
     found.intakeLogs.push(logEntry);
@@ -116,19 +130,21 @@ export async function updateMedicationAlarm(req: AuthenticatedRequest, res: Resp
   const userId = req.user?.id || 'patient-user-001';
 
   try {
-    if (isDatabaseConnected()) {
-      const updated = await MedicationAlarmModel.findOneAndUpdate(
-        { _id: id, userId },
-        { ...req.body },
-        { new: true }
-      );
-      if (updated) return sendSuccess(res, updated, 'Medication alarm updated');
+    if (isPrismaConnected()) {
+      const updated = await prisma.medicationAlarm.updateMany({
+        where: { id, userId },
+        data: req.body,
+      });
+      if (updated.count > 0) {
+        const record = await prisma.medicationAlarm.findUnique({ where: { id } });
+        return sendSuccess(res, record, 'Medication alarm updated in Supabase PostgreSQL');
+      }
     }
   } catch (err) {
     // fallback
   }
 
-  const idx = memoryAlarms.findIndex((a) => a.id === id || a._id === id);
+  const idx = memoryAlarms.findIndex((a) => a.id === id);
   if (idx !== -1) {
     memoryAlarms[idx] = { ...memoryAlarms[idx], ...req.body };
     return sendSuccess(res, memoryAlarms[idx], 'Medication alarm updated');
@@ -142,13 +158,16 @@ export async function deleteMedicationAlarm(req: AuthenticatedRequest, res: Resp
   const userId = req.user?.id || 'patient-user-001';
 
   try {
-    if (isDatabaseConnected()) {
-      await MedicationAlarmModel.deleteOne({ _id: id, userId });
+    if (isPrismaConnected()) {
+      await prisma.medicationAlarm.deleteMany({
+        where: { id, userId },
+      });
+      return sendSuccess(res, { id }, 'Medication alarm deleted from Supabase PostgreSQL');
     }
   } catch (err) {
     // fallback
   }
 
-  memoryAlarms = memoryAlarms.filter((a) => a.id !== id && a._id !== id);
-  return sendSuccess(res, { id }, 'Medication alarm removed');
+  memoryAlarms = memoryAlarms.filter((a) => a.id !== id);
+  return sendSuccess(res, { id }, 'Medication alarm deleted');
 }

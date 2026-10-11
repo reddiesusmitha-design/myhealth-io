@@ -3,168 +3,204 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
-  id           String          @id @default(uuid())
-  email        String          @unique
-  passwordHash String
-  fullName     String
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
-  profile      PatientProfile?
-  documents    MedicalDocument[]
-  labs         LabObservation[]
-  medications  MedicationRecord[]
-  timeline     TimelineEvent[]
-  auditEvents  AuditEvent[]
+  id                  String              @id @default(uuid())
+  email               String              @unique
+  passwordHash        String
+  fullName            String
+  mockAbhaId          String              @unique
+  preferredLanguage   String              @default("en")
+  dateOfBirth         DateTime?
+  gender              String?
+  bloodGroup          String              @default("O+")
+  emergencyContact    String?             @default("")
+  allergies           Json                @default("[]")
+  chronicConditions   Json                @default("[]")
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  reports             MedicalReport[]
+  timelineEvents      TimelineEvent[]
+  medicationAlarms    MedicationAlarm[]
+  dietProfile         DietProfile?
+  ambulanceDispatches AmbulanceDispatch[]
+  appointments        Appointment[]
+  notifications       Notification[]
 
   @@map("users")
 }
 
-model PatientProfile {
-  id                String   @id @default(uuid())
-  userId            String   @unique
-  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  mockAbhaId        String   @unique
-  dateOfBirth       DateTime?
-  gender            String?
-  bloodGroup        String?
-  emergencyContact  String?
-  preferredLanguage String   @default("en")
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  @@map("patient_profiles")
-}
-
-model MedicalDocument {
+model MedicalReport {
   id               String          @id @default(uuid())
   userId           String
   user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   originalFilename String
-  filePath         String
-  mimeType         String
-  fileSizeBytes    BigInt
+  filePath         String          @default("")
+  mimeType         String          @default("application/pdf")
+  fileSizeBytes    BigInt          @default(0)
   documentType     String          @default("LAB_REPORT")
-  documentDate     DateTime?
+  documentDate     DateTime        @default(now())
+  facility         String          @default("Clinical Lab")
   extractedRawText String?         @db.Text
-  processingStatus String          @default("PENDING")
-  ocrConfidence    Float?
+  processingStatus String          @default("COMPLETED")
+  ocrConfidence    Float?          @default(95.0)
+  flaggedCount     Int             @default(0)
+  fields           Json            @default("[]")
+  labs             Json            @default("[]")
+  medications      Json            @default("[]")
+  summary          Json?
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
-  extractedFields  ExtractedField[]
-  labs             LabObservation[]
-  medications      MedicationRecord[]
-  summary          HealthSummary?
+
   timelineEvents   TimelineEvent[]
 
   @@index([userId])
-  @@map("medical_documents")
-}
-
-model ExtractedField {
-  id                 String          @id @default(uuid())
-  documentId         String
-  document           MedicalDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  fieldCategory      String
-  fieldKey           String
-  fieldValue         String
-  confidenceScore    Float
-  isUncertain        Boolean         @default(false)
-  uncertaintyReason  String?
-  sourceSnippet      String          @db.Text
-  isUserReviewed     Boolean         @default(false)
-  userOverrideValue  String?
-  createdAt          DateTime        @default(now())
-
-  @@index([documentId])
-  @@map("extracted_fields")
-}
-
-model LabObservation {
-  id              String          @id @default(uuid())
-  documentId      String
-  document        MedicalDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  userId          String
-  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  testName        String
-  valueNumeric    Float?
-  valueString     String?
-  unit            String?
-  referenceLow    Float?
-  referenceHigh   Float?
-  referenceText   String?
-  interpretation  String?
-  observationDate DateTime?
-  sourceSnippet   String?         @db.Text
-  createdAt       DateTime        @default(now())
-
-  @@index([userId])
-  @@map("lab_observations")
-}
-
-model MedicationRecord {
-  id             String          @id @default(uuid())
-  documentId     String
-  document       MedicalDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  userId         String
-  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  medicationName String
-  dosage         String?
-  frequency      String?
-  duration       String?
-  route          String?
-  instructions   String?         @db.Text
-  sourceSnippet  String?         @db.Text
-  createdAt      DateTime        @default(now())
-
-  @@index([userId])
-  @@map("medication_records")
-}
-
-model HealthSummary {
-  id             String          @id @default(uuid())
-  documentId     String          @unique
-  document       MedicalDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  summaryEn      String          @db.Text
-  summaryTe      String?         @db.Text
-  keyFindings    Json            @default("[]")
-  aiProvider     String
-  disclaimerText String          @db.Text
-  createdAt      DateTime        @default(now())
-
-  @@map("health_summaries")
+  @@map("medical_reports")
 }
 
 model TimelineEvent {
-  id             String           @id @default(uuid())
+  id             String         @id @default(uuid())
   userId         String
-  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  documentId     String?
-  document       MedicalDocument? @relation(fields: [documentId], references: [id], onDelete: SetNull)
-  eventDate      DateTime
-  eventType      String
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reportId       String?
+  report         MedicalReport? @relation(fields: [reportId], references: [id], onDelete: SetNull)
+  eventDate      DateTime       @default(now())
+  eventType      String         @default("LAB_REPORT")
   title          String
-  summaryPreview String?          @db.Text
-  severityLevel  String           @default("INFO")
-  createdAt      DateTime         @default(now())
+  summaryPreview String?        @db.Text
+  severityLevel  String         @default("NORMAL")
+  createdAt      DateTime       @default(now())
 
   @@index([userId, eventDate])
   @@map("timeline_events")
 }
 
-model AuditEvent {
-  id           String   @id @default(uuid())
-  userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  action       String
-  resourceType String?
-  resourceId   String?
-  ipAddress    String?
-  createdAt    DateTime @default(now())
+model MedicationAlarm {
+  id                String   @id @default(uuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  medicineName      String
+  dosage            String   @default("1 Tablet")
+  frequency         String   @default("TWICE_DAILY")
+  timings           Json     @default("[\"08:00\", \"20:00\"]")
+  mealRelation      String   @default("AFTER_MEAL")
+  instructions      String?  @default("")
+  color             String?  @default("#0d9488")
+  pillStock         Int      @default(30)
+  lowStockThreshold Int      @default(5)
+  active            Boolean  @default(true)
+  intakeLogs        Json     @default("[]")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
-  @@map("audit_events")
+  @@index([userId])
+  @@map("medication_alarms")
+}
+
+model DietProfile {
+  id                      String   @id @default(uuid())
+  userId                  String   @unique
+  user                    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planName                String
+  planType                String   @default("BALANCED_WELLNESS")
+  targetDailyCalories     Int      @default(1800)
+  dailyWaterTargetGlasses Int      @default(8)
+  waterLoggedGlasses      Int      @default(0)
+  dietaryRestrictions     Json     @default("[]")
+  meals                   Json     @default("[]")
+  guidelines              Json     @default("[]")
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@map("diet_profiles")
+}
+
+model AmbulanceDispatch {
+  id                        String   @id @default(uuid())
+  userId                    String
+  user                      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  patientName               String
+  patientPhone              String
+  bloodGroup                String   @default("O+")
+  criticalConditions        Json     @default("[]")
+  allergies                 Json     @default("[]")
+  location                  Json
+  severity                  String   @default("CRITICAL")
+  ambulanceType             String   @default("ADVANCED_CARDIAC_ICU")
+  status                    String   @default("DISPATCHED")
+  hospitalDestination       String   @default("Apollo Emergency Medical Centre")
+  ambulanceDetails          Json
+  emergencyContactsNotified Boolean  @default(true)
+  notes                     String?  @db.Text
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  @@index([userId])
+  @@map("ambulance_dispatches")
+}
+
+model Appointment {
+  id               String   @id @default(uuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  doctorName       String
+  specialty        String   @default("General Medicine")
+  clinicName       String
+  date             String
+  time             String
+  type             String   @default("FOLLOW_UP")
+  status           String   @default("UPCOMING")
+  reasonForVisit   String   @db.Text
+  doctorNotes      String?  @default("") @db.Text
+  nextFollowUpDays Int?
+  reminderSet      Boolean  @default(true)
+  location         String   @default("Main Consultation Wing, Room 204")
+  contactPhone     String?  @default("+91 40 2345 6789")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([userId])
+  @@map("appointments")
+}
+
+model FirstAidGuide {
+  id                       String   @id @default(uuid())
+  slug                     String   @unique
+  title                    String
+  category                 String
+  severity                 String   @default("URGENT")
+  summary                  String   @db.Text
+  symptoms                 Json     @default("[]")
+  steps                    Json     @default("[]")
+  dos                      Json     @default("[]")
+  donts                    Json     @default("[]")
+  cprCadenceBpm            Int?
+  callEmergencyImmediately Boolean  @default(false)
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  @@map("first_aid_guides")
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  message   String   @db.Text
+  type      String   @default("SYSTEM")
+  priority  String   @default("NORMAL")
+  read      Boolean  @default(false)
+  actionUrl String?  @default("")
+  metadata  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@map("notifications")
 }

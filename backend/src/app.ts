@@ -13,7 +13,7 @@ import appointmentsRoutes from './routes/appointments.routes';
 import firstaidRoutes from './routes/firstaid.routes';
 import { errorHandler } from './middleware/errorHandler';
 import { config } from './config';
-import { getDatabaseStatus, isDatabaseConnected, connectDatabase } from './config/database';
+import { getPrismaStatus, isPrismaConnected, connectPrisma } from './config/prisma';
 import { isSupabaseConfigured } from './config/supabase';
 
 const app: Application = express();
@@ -60,15 +60,15 @@ app.use(express.urlencoded({ extended: true }));
 
 // Health Check
 app.get('/api/health', async (req: Request, res: Response) => {
-  if (!isDatabaseConnected()) {
-    await connectDatabase();
+  if (!isPrismaConnected()) {
+    await connectPrisma();
   }
   res.status(200).json({
     status: 'healthy',
     version: '1.0.0',
     timestamp: new Date().toISOString(),
     aiProvider: config.aiProvider,
-    database: getDatabaseStatus(),
+    database: getPrismaStatus(),
     supabase: { configured: isSupabaseConfigured },
   });
 });

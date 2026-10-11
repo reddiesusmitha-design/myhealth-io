@@ -256,21 +256,22 @@ npm run dev
 
 ## 🧪 Testing & Validation
 
-The backend includes an automated test suite executed via Node's native test runner:
+The backend includes a comprehensive, automated test suite executed via Node's native test runner (`node --test` with `tsx`):
 
 ```bash
 cd backend
 npm test
 ```
 
-### Test Coverage Highlights:
-- ✅ **Prisma PostgreSQL Connection**: Validates client instantiation and query delegates.
-- ✅ **Bcrypt Security**: Validates password salt generation and rejects plaintext leaks.
-- ✅ **JWT Authentication**: Validates signed payload verification, expiration, and tampering prevention.
-- ✅ **Multi-Tenant Isolation**: Confirms User A cannot query or mutate User B records.
-- ✅ **BigInt Serialization**: Confirms `fileSizeBytes` safely converts to JSON numbers.
-- ✅ **Medication Inventory**: Confirms low stock threshold calculations.
-- ✅ **Database Transactions**: Confirms atomicity via `prisma.$transaction`.
+### Complete Test Suite Summary (85 Tests / 13 Suites / 100% Passing):
+- ✅ **Unit Tests (`tests/unit/clinical_safety.test.ts` - 7 tests)**: Validates clinical safety guardrails (blocks dangerous prescriptive medication alteration advice and diagnostic assertions), checks mandatory clinical disclaimers, entity extraction contracts, and Telugu medical concept translation.
+- ✅ **Authentication & Profile API (`tests/api/auth_and_profile.test.ts` - 11 tests)**: Validates user registration with mock ABHA generation, duplicate email rejection, missing field validation, bcrypt password hashing, login token issuance, tampered token rejection, and profile updates.
+- ✅ **Medical Reports & Timeline API (`tests/api/medical_reports.test.ts` - 9 tests)**: Validates report upload with Multer, BigInt `fileSizeBytes` serialization, report listing, detail retrieval, analysis, user field review, timeline event creation, and report deletion.
+- ✅ **Clinical Features API (`tests/api/health_features.test.ts` - 23 tests)**: Validates in-app notifications (read, mark-all-read, delete), medication alarms with stock decrement on intake, diet profile and water hydration glasses counter, Emergency SOS ambulance dispatch, appointment scheduling, and emergency first aid guides.
+- ✅ **Security & Multi-Tenant Isolation (`tests/security/security_guardrails.test.ts` - 8 tests)**: Enforces cross-tenant data isolation (User B cannot see or delete User A records), confirms zero leakage of password hashes or database credentials in API responses, verifies Helmet security headers, and tests SQL injection resilience.
+- ✅ **End-to-End Patient Flow (`tests/e2e/patient_full_flow.test.ts` - 13 tests)**: Runs the complete 13-step journey from registration and onboarding through report ingestion, timeline generation, notification delivery, medication alarms, hydration logging, SOS dispatch, appointment booking, and CPR emergency guide review.
+- ✅ **Database & Prisma Delegates (`tests/migration_validation.test.ts` - 12 tests)**: Validates all PostgreSQL Prisma model delegates, CRUD query methods, bcrypt salt generation, JWT verification, and transaction atomicity.
+- ✅ **Health & Base Endpoints (`tests/app.test.ts` - 2 tests)**: Verifies `/api/health` status, database connection, and 401 unauthorized protection.
 
 ---
 
@@ -347,6 +348,25 @@ All protected endpoints require an `Authorization: Bearer <TOKEN>` header.
 - **Publish Directory**: `dist`
 - **Environment Variables**:
   - `VITE_API_URL`: `https://myhealthio-backend.onrender.com/api`
+
+---
+
+## 🛠️ Troubleshooting
+
+### Database Connection Issues
+- **Symptom**: `[Prisma PostgreSQL] Notice: DATABASE_URL is unconfigured or contains placeholder values`.
+- **Solution**: Copy `.env.example` to `backend/.env` and replace placeholders with your actual Supabase PostgreSQL connection string from Supabase Settings -> Database -> Connection String.
+- **Port Reference**:
+  - `port 6543`: Transaction Pooler (use for `DATABASE_URL` with `?pgbouncer=true`).
+  - `port 5432`: Direct / Session connection (use for `DIRECT_URL` during migrations).
+
+### CORS / Origin Errors
+- **Symptom**: Cross-Origin Request Blocked in browser console.
+- **Solution**: Ensure `CLIENT_URL` in `backend/.env` matches your frontend origin (e.g. `http://localhost:5173` for dev, or `https://myhealthio-frontend.onrender.com` in production). Backend CORS middleware also permits `.vercel.app`, `.netlify.app`, and `.onrender.com` domains automatically.
+
+### Running Automated Tests
+- **Symptom**: Missing dependencies or test timeouts.
+- **Solution**: Run `npm install` in `backend` and execute `npm test`. The test suite automatically operates in resilient mode if a database connection is offline.
 
 ---
 

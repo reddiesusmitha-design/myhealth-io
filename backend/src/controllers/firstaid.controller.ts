@@ -1,7 +1,6 @@
 import { Request, Response } from 'express';
 import { sendSuccess, sendError } from '../utils/response';
-import { FirstAidGuideModel } from '../models/FirstAid';
-import { isDatabaseConnected } from '../config/database';
+import { prisma, isPrismaConnected } from '../config/prisma';
 
 export const FIRST_AID_GUIDES = [
   {
@@ -468,13 +467,31 @@ export const FIRST_AID_GUIDES = [
 
 export async function listFirstAidGuides(req: Request, res: Response) {
   try {
-    if (isDatabaseConnected()) {
-      const count = await FirstAidGuideModel.countDocuments();
+    if (isPrismaConnected()) {
+      const count = await prisma.firstAidGuide.count();
       if (count === 0) {
-        await FirstAidGuideModel.insertMany(FIRST_AID_GUIDES);
+        for (const guide of FIRST_AID_GUIDES) {
+          await prisma.firstAidGuide.upsert({
+            where: { slug: guide.slug },
+            update: {},
+            create: {
+              slug: guide.slug,
+              title: guide.title,
+              category: guide.category,
+              severity: guide.severity,
+              summary: guide.summary,
+              symptoms: guide.symptoms || [],
+              steps: guide.steps || [],
+              dos: guide.dos || [],
+              donts: guide.donts || [],
+              cprCadenceBpm: guide.cprCadenceBpm || null,
+              callEmergencyImmediately: Boolean(guide.callEmergencyImmediately),
+            },
+          });
+        }
       }
-      const docs = await FirstAidGuideModel.find().select('-__v');
-      return sendSuccess(res, docs, 'First aid guides retrieved');
+      const docs = await prisma.firstAidGuide.findMany();
+      return sendSuccess(res, docs, 'First aid guides retrieved from Supabase PostgreSQL');
     }
   } catch (err) {
     // fallback
@@ -485,17 +502,27 @@ export async function listFirstAidGuides(req: Request, res: Response) {
 
 export async function getFirstAidGuideBySlug(req: Request, res: Response) {
   const { slug } = req.params;
+  const normalizedSlug = slug.toLowerCase().trim();
 
   try {
-    if (isDatabaseConnected()) {
-      const doc = await FirstAidGuideModel.findOne({ slug });
-      if (doc) return sendSuccess(res, doc, 'First aid guide details retrieved');
+    if (isPrismaConnected()) {
+      const doc = await prisma.firstAidGuide.findFirst({
+        where: {
+          OR: [
+            { slug: normalizedSlug },
+            { slug: `${normalizedSlug}-adult` },
+          ],
+        },
+      });
+      if (doc) return sendSuccess(res, doc, 'First aid guide details retrieved from Supabase PostgreSQL');
     }
   } catch (err) {
     // fallback
   }
 
-  const guide = FIRST_AID_GUIDES.find((g) => g.slug === slug);
+  const guide = FIRST_AID_GUIDES.find(
+    (g) => g.slug === normalizedSlug || g.slug === `${normalizedSlug}-adult`
+  );
   if (!guide) {
     return sendError(res, 'First aid guide not found', 404);
   }

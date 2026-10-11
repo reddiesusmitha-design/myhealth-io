@@ -1,8 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { sendSuccess, sendError } from '../utils/response';
-import { AmbulanceDispatchModel } from '../models/Emergency';
-import { isDatabaseConnected } from '../config/database';
+import { prisma, isPrismaConnected } from '../config/prisma';
 
 let activeDispatches: Record<string, any> = {};
 
@@ -67,7 +66,6 @@ export async function triggerEmergencySos(req: AuthenticatedRequest, res: Respon
   } = req.body;
 
   const dispatchData = {
-    id: `dispatch-${Date.now()}`,
     userId,
     patientName: patientName || 'Demo Patient',
     patientPhone: patientPhone || '+91 98765 43210',
@@ -93,34 +91,39 @@ export async function triggerEmergencySos(req: AuthenticatedRequest, res: Respon
     },
     emergencyContactsNotified: true,
     notes: 'GPS telemetry linked. Siren active. Nearest traffic signals alerted for green corridor.',
-    createdAt: new Date(),
   };
 
   try {
-    if (isDatabaseConnected()) {
-      const doc = await AmbulanceDispatchModel.create(dispatchData);
+    if (isPrismaConnected()) {
+      const doc = await prisma.ambulanceDispatch.create({
+        data: dispatchData,
+      });
       activeDispatches[userId] = doc;
-      return sendSuccess(res, doc, 'Ambulance dispatched! Emergency services en route.', 201);
+      return sendSuccess(res, doc, 'Ambulance dispatched! Emergency services en route in Supabase PostgreSQL.', 201);
     }
   } catch (err) {
     // fallback
   }
 
-  activeDispatches[userId] = dispatchData;
-  return sendSuccess(res, dispatchData, 'Ambulance dispatched! Emergency services en route.', 201);
+  const memDoc = { id: `dispatch-${Date.now()}`, ...dispatchData, createdAt: new Date() };
+  activeDispatches[userId] = memDoc;
+  return sendSuccess(res, memDoc, 'Ambulance dispatched! Emergency services en route.', 201);
 }
 
 export async function getActiveEmergency(req: AuthenticatedRequest, res: Response) {
   const userId = req.user?.id || 'patient-user-001';
 
   try {
-    if (isDatabaseConnected()) {
-      const doc = await AmbulanceDispatchModel.findOne({
-        userId,
-        status: { $in: ['REQUESTED', 'DISPATCHED', 'EN_ROUTE', 'ARRIVED'] },
-      }).sort({ createdAt: -1 });
+    if (isPrismaConnected()) {
+      const doc = await prisma.ambulanceDispatch.findFirst({
+        where: {
+          userId,
+          status: { in: ['REQUESTED', 'DISPATCHED', 'EN_ROUTE', 'ARRIVED'] },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
 
-      if (doc) return sendSuccess(res, doc, 'Active emergency dispatch found');
+      if (doc) return sendSuccess(res, doc, 'Active emergency dispatch found in Supabase PostgreSQL');
     }
   } catch (err) {
     // fallback
@@ -136,15 +139,28 @@ export async function updateEmergencyStatus(req: AuthenticatedRequest, res: Resp
   const { status, etaMinutes } = req.body;
 
   try {
-    if (isDatabaseConnected()) {
-      const updated = await AmbulanceDispatchModel.findOneAndUpdate(
-        { _id: id, userId },
-        { status, ...(etaMinutes !== undefined && { 'ambulanceDetails.etaMinutes': etaMinutes }) },
-        { new: true }
-      );
-      if (updated) {
+    if (isPrismaConnected()) {
+      const existing = await prisma.ambulanceDispatch.findFirst({
+        where: { id, userId },
+      });
+
+      if (existing) {
+        let details = typeof existing.ambulanceDetails === 'object' && existing.ambulanceDetails !== null
+          ? { ...(existing.ambulanceDetails as any) }
+          : {};
+        if (etaMinutes !== undefined) {
+          details.etaMinutes = etaMinutes;
+        }
+
+        const updated = await prisma.ambulanceDispatch.update({
+          where: { id: existing.id },
+          data: {
+            status,
+            ambulanceDetails: details,
+          },
+        });
         activeDispatches[userId] = updated;
-        return sendSuccess(res, updated, 'Emergency status updated');
+        return sendSuccess(res, updated, 'Emergency status updated in Supabase PostgreSQL');
       }
     }
   } catch (err) {
@@ -153,7 +169,7 @@ export async function updateEmergencyStatus(req: AuthenticatedRequest, res: Resp
 
   if (activeDispatches[userId]) {
     activeDispatches[userId].status = status;
-    if (etaMinutes !== undefined) {
+    if (etaMinutes !== undefined && activeDispatches[userId].ambulanceDetails) {
       activeDispatches[userId].ambulanceDetails.etaMinutes = etaMinutes;
     }
     return sendSuccess(res, activeDispatches[userId], 'Emergency status updated');

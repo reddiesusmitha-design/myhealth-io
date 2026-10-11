@@ -3,16 +3,14 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { sendSuccess, sendError } from '../utils/response';
 import { config } from '../config';
-import { UserModel } from '../models/User';
-import { NotificationModel } from '../models/Notification';
-import { isDatabaseConnected, connectDatabase } from '../config/database';
+import { prisma, isPrismaConnected, connectPrisma } from '../config/prisma';
 import { AuthenticatedRequest } from '../middleware/auth';
 
-// Resilient in-memory user registry for when DB_URL is awaiting real Atlas credentials
+// In-memory fallback registry if database is temporarily connecting
 const memoryUsers = new Map<string, any>();
 
 /**
- * Register a new user: Saves to MongoDB Atlas if connected, with resilient fallback
+ * Register a new user: Saves directly to Supabase PostgreSQL via Prisma
  */
 export async function register(req: Request, res: Response) {
   const { email, password, fullName, preferredLanguage } = req.body;
@@ -21,18 +19,20 @@ export async function register(req: Request, res: Response) {
     return sendError(res, 'Full name, email, and password are required', 400);
   }
 
-  // Attempt database connection if not currently active
-  let dbActive = isDatabaseConnected();
-  if (!dbActive) {
-    dbActive = await connectDatabase();
-  }
-
   const normalizedEmail = email.toLowerCase().trim();
 
   try {
-    // 1. If MongoDB Atlas is connected, use real Mongoose model
-    if (dbActive) {
-      const existingUser = await UserModel.findOne({ email: normalizedEmail });
+    // Ensure connection is active
+    let isConnected = isPrismaConnected();
+    if (!isConnected) {
+      isConnected = await connectPrisma();
+    }
+
+    if (isConnected) {
+      const existingUser = await prisma.user.findUnique({
+        where: { email: normalizedEmail },
+      });
+
       if (existingUser) {
         return sendError(res, 'An account with this email address already exists. Please log in.', 400);
       }
@@ -41,54 +41,59 @@ export async function register(req: Request, res: Response) {
       const randomPart = () => Math.floor(1000 + Math.random() * 9000);
       const mockAbhaId = `ABHA-91-${randomPart()}-${randomPart()}-${randomPart()}`;
 
-      const userDoc = await UserModel.create({
-        email: normalizedEmail,
-        passwordHash,
-        fullName: fullName.trim(),
-        mockAbhaId,
-        preferredLanguage: preferredLanguage || 'en',
-        bloodGroup: 'O+',
-        allergies: [],
-        chronicConditions: [],
+      const userRecord = await prisma.user.create({
+        data: {
+          email: normalizedEmail,
+          passwordHash,
+          fullName: fullName.trim(),
+          mockAbhaId,
+          preferredLanguage: preferredLanguage || 'en',
+          bloodGroup: 'O+',
+          emergencyContact: '',
+          allergies: [],
+          chronicConditions: [],
+        },
       });
 
       try {
-        await NotificationModel.create({
-          userId: userDoc._id.toString(),
-          title: 'Welcome to MyHealthIO!',
-          message: `Account created for ${userDoc.fullName}. Your ABHA ID is ${mockAbhaId}.`,
-          type: 'SYSTEM',
-          priority: 'NORMAL',
-          read: false,
+        await prisma.notification.create({
+          data: {
+            userId: userRecord.id,
+            title: 'Welcome to MyHealthIO!',
+            message: `Account created for ${userRecord.fullName}. Your ABHA ID is ${mockAbhaId}.`,
+            type: 'SYSTEM',
+            priority: 'NORMAL',
+            read: false,
+          },
         });
       } catch {
         // non-blocking
       }
 
       const token = jwt.sign(
-        { id: userDoc._id.toString(), email: userDoc.email },
+        { id: userRecord.id, email: userRecord.email },
         config.jwtSecret,
         { expiresIn: config.jwtExpiresIn as any }
       );
 
       const user = {
-        id: userDoc._id.toString(),
-        email: userDoc.email,
-        fullName: userDoc.fullName,
-        mockAbhaId: userDoc.mockAbhaId,
-        preferredLanguage: userDoc.preferredLanguage,
-        bloodGroup: userDoc.bloodGroup,
-        emergencyContact: userDoc.emergencyContact || '',
+        id: userRecord.id,
+        email: userRecord.email,
+        fullName: userRecord.fullName,
+        mockAbhaId: userRecord.mockAbhaId,
+        preferredLanguage: userRecord.preferredLanguage,
+        bloodGroup: userRecord.bloodGroup,
+        emergencyContact: userRecord.emergencyContact || '',
       };
 
-      // Also cache in memory map
+      // Cache in memory fallback
       memoryUsers.set(normalizedEmail, { ...user, passwordHash });
       memoryUsers.set(user.id, { ...user, passwordHash });
 
-      return sendSuccess(res, { token, user }, 'Account successfully created and saved in MongoDB Atlas', 201);
+      return sendSuccess(res, { token, user }, 'Account successfully created and saved in Supabase PostgreSQL', 201);
     }
 
-    // 2. Resilient fallback mode (when DB_URL has <username>/<password> placeholders)
+    // Resilient fallback when database is not yet connected
     if (memoryUsers.has(normalizedEmail)) {
       return sendError(res, 'An account with this email address already exists. Please log in.', 400);
     }
@@ -120,12 +125,7 @@ export async function register(req: Request, res: Response) {
       { expiresIn: config.jwtExpiresIn as any }
     );
 
-    return sendSuccess(
-      res,
-      { token, user },
-      'Account created successfully! Note: Replace <username>:<password> in backend/.env with your MongoDB Atlas string to persist directly to Atlas.',
-      201
-    );
+    return sendSuccess(res, { token, user }, 'Account created successfully in memory registry', 201);
   } catch (error: any) {
     console.error('[Registration Error]:', error);
     return sendError(res, `Failed to register user: ${error.message}`, 500);
@@ -133,7 +133,7 @@ export async function register(req: Request, res: Response) {
 }
 
 /**
- * Authenticate existing user against MongoDB Atlas or fallback registry
+ * Authenticate existing user against Supabase PostgreSQL
  */
 export async function login(req: Request, res: Response) {
   const { email, password } = req.body;
@@ -142,37 +142,40 @@ export async function login(req: Request, res: Response) {
     return sendError(res, 'Email and password are required', 400);
   }
 
-  let dbActive = isDatabaseConnected();
-  if (!dbActive) {
-    dbActive = await connectDatabase();
-  }
-
   const normalizedEmail = email.toLowerCase().trim();
 
   try {
-    // 1. Try MongoDB Atlas if connected
-    if (dbActive) {
-      const userDoc = await UserModel.findOne({ email: normalizedEmail });
-      if (userDoc) {
-        const isMatch = await bcrypt.compare(password, userDoc.passwordHash);
+    let isConnected = isPrismaConnected();
+    if (!isConnected) {
+      isConnected = await connectPrisma();
+    }
+
+    // 1. Try Supabase PostgreSQL via Prisma
+    if (isConnected) {
+      const userRecord = await prisma.user.findUnique({
+        where: { email: normalizedEmail },
+      });
+
+      if (userRecord) {
+        const isMatch = await bcrypt.compare(password, userRecord.passwordHash);
         if (!isMatch) {
           return sendError(res, 'Invalid email or password.', 401);
         }
 
         const token = jwt.sign(
-          { id: userDoc._id.toString(), email: userDoc.email },
+          { id: userRecord.id, email: userRecord.email },
           config.jwtSecret,
           { expiresIn: config.jwtExpiresIn as any }
         );
 
         const user = {
-          id: userDoc._id.toString(),
-          email: userDoc.email,
-          fullName: userDoc.fullName,
-          mockAbhaId: userDoc.mockAbhaId,
-          preferredLanguage: userDoc.preferredLanguage,
-          bloodGroup: userDoc.bloodGroup,
-          emergencyContact: userDoc.emergencyContact || '',
+          id: userRecord.id,
+          email: userRecord.email,
+          fullName: userRecord.fullName,
+          mockAbhaId: userRecord.mockAbhaId,
+          preferredLanguage: userRecord.preferredLanguage,
+          bloodGroup: userRecord.bloodGroup,
+          emergencyContact: userRecord.emergencyContact || '',
         };
 
         return sendSuccess(res, { token, user }, 'Login successful');
@@ -214,10 +217,28 @@ export async function getMe(req: AuthenticatedRequest, res: Response) {
   }
 
   try {
-    if (isDatabaseConnected()) {
-      const userDoc = await UserModel.findById(userId).select('-passwordHash');
-      if (userDoc) {
-        return sendSuccess(res, userDoc, 'User details retrieved');
+    if (isPrismaConnected()) {
+      const userRecord = await prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          email: true,
+          fullName: true,
+          mockAbhaId: true,
+          preferredLanguage: true,
+          dateOfBirth: true,
+          gender: true,
+          bloodGroup: true,
+          emergencyContact: true,
+          allergies: true,
+          chronicConditions: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+
+      if (userRecord) {
+        return sendSuccess(res, userRecord, 'User details retrieved');
       }
     }
 
